@@ -1,0 +1,401 @@
+---
+title: "Introduction of Facebook Prophet"
+output: 
+    html_notebook:
+        toc: true
+        toc_depth: 2
+        number_sections: true
+        theme: cerulean
+        highlight: tango
+date: "create date : 14 march, 2017 / revised date : `r format(Sys.time(), '%d %B, %Y')`"
+author: "author : khlee"
+---
+
+<style type="text/css">
+h1 { /* Header 1 */
+ font-size: 28px;
+ color: DarkBlue;
+}
+</style>
+
+
+<hr>
+
+# Overview of Prophet : forecasting at scale
+
+<br>
+최근 Facebook에서는 R 및 Python을 통해 전문적인 지식 없이 시계열 예측을 쉽게 수행할 수 있는 오픈소스 패키지인 Prophet을 릴리즈하였다.
+Prophet의 예측은 자동적인 시계열 예측과 시각화를 통해 피드백을 받고 분석가가 피드백에대한 조정을 수행하는 Analyst in the loop 방식이다.
+
+Prophet은 3가지 시계열 모델(growth, seasonality, holidays)로 다음 식과 같이 표현할 수 있다.
+$$
+\large\begin{aligned}
+y(t) = g(t) + s(t) + h(t) + {\varepsilon _t}
+\end{aligned}
+$$
+g(t)는 growth를 의미하고, s(t)는 seasonality를 의미한다. 그리고 h(t)는 holidays의 영향을 의미한다. epsilon t는 관측할 수 없는 외부 요소의 에러를 나타내고, 정규분포를 따른다.
+Prophet의 내부적으로는 시계열 예측의 대표적인 방식인 ARIMA가 아닌 Bayesian 방식의 GAM(Generalized Additive Model)인 regression 계열의 방식으로 작동한다.
+
+Prophet은 페이스북에서 자신들의 business에 잘 맞게 최적화 하였기 때문에, 모든 시계열 예측에서 잘 작동한다는 것을 의미하지는 않는다. 
+구체적으로 다음과 같은 상황의 business에서 잘 작동한다.
+
+* 몇 달이상의(권장 1년) 시간별, 일별, 주별 시계열 데이터
+* 요일 및 시간에 따른 계정성이 있는 데이터
+* 사전에 알려져 있는 불규칙한 간격에서 발생하는 중요한 공휴일 (예: 명절)
+* 어느 정도 누락된 데이터 및 이상치 데이터를 허용할 수 있음
+* 제품 출시 또는 로깅 변경으로 인한 추세가 변할 수 있는 데이터
+* 트렌드가 자연적 한계에 도달 하거나 비선형적으로 성장하는 곡선
+
+Prophet의 작동 기반인 additive regression model에는 다음과 같은 특징이 있다.
+
+* 구간별 선형 또는 로지스틱 성장 추세에서 데이터의 변경점을 선택하여 초세의 변화를 자동으로 감지
+* 연단위의 계절적인 요소는 퓨리에 급수를 사용하여 모델링함
+* 주단위의 계적적인 요소는 더미 변수를 사용하여 모델링함
+* 중요한 날(추석, 상품 출시, 광고 출시 등)을 요인으로 모델링에 적용할 수 있음 
+
+**참조**  
+tutorial 원본 <https://facebookincubator.github.io/prophet/docs/quick_start.html#r-api>
+read the paper <https://facebookincubator.github.io/prophet/static/prophet_paper_20170113.pdf>
+
+<hr>
+<br>
+
+# quick start of prophet
+<br>
+
+import library
+```{r}
+library(prophet)
+library(dplyr)
+library(ggplot2)
+```
+
+### read exam data
+peyton maning(미식축구선수)의 2007년12월10일 부터 2016년1월20일까지의 위키피디아 방문자 수 데이터이다.
+방문자 수 스케일 차이가 크므로 방문자 수의 log scale를 취한다.
+데이터의 구조는 ds : 시간과 y: 값을 가진 data frame 형태이다.
+```{r, echo=TRUE}
+df1 <- read.csv('example_wp_peyton_manning.csv') 
+df1 <- df1 %>% mutate(y = log(y))
+head(df1)
+```
+
+### trainning prophet
+위 예제와 같은 data frame을 prophet 함수에 넣으므로써 시계열 데이터의 학습을 간단하게 할 수 있다.
+```{r}
+m <- prophet(df1)
+```
+
+### predict future
+1. make_future_datafame 함수를 사용해서 다음 과 같이 예측할 앞 날의 periods를 입력하여 forecasting data frame을 만든다.   
+default 값은 day이다. 데이터 주기가 week 또는 month이면 by="week" or by="month" 를 입력하면 된다.  
+(prophet 모델을 생성할때 data frame의 date 주기와 동일하게 설정한는 것이 좋다)  
+2. predict 함수를 사용해서 위에서 만든 prophet 모델과 forecasting data frame을 입력하여 예측을 수행한다.
+```{r}
+future <- make_future_dataframe(m, periods = 365)
+forecast <- predict(m, future)
+```
+
+### plotting the forecast
+예측된 forecast data frame에는 예측값 및 upper, lower 등 다양한 예측 구성요소의 필드를 가진다.
+```{r}
+tail(forecast)
+```
+
+plot함수에 prophet 모델과 forecast 값을 입력하면 검은 점 실제 값과 파란색 라인의 예측 값으로 ploting 된다.
+```{r}
+plot(m, forecast)
+```
+
+prophet_plot_components 함수를 사용해서 그 외에 prophet의 trend, weekly, yearly의 구성요소를 그래프로 확인 할 수 있다.  
+*그래프 해석*  
+trend는 2016년 이후 감소하는 추세를 보이고 뒤로 갈 수 록 불확실성(uncertainty)이 커지는 것을 볼 수 있다.  
+weekly는 일요일에 증가해서 월요일에 피크를 찍고 감소하는 것으로 보인다.
+yearly는 9월 이후 부터 년 초까지 높은 값을 유지하고 3월 이후 부터 떨어지는 것으로 미식축구의 시즌성을 보여준다.
+```{r}
+prophet_plot_components(m, forecast)
+```
+
+<hr>
+<br>
+
+# forecasting growth
+<br>
+
+### read exam data
+forecasting growth의 예제 데이터는 2008년1월30일 부터 2015년12월19일 까지 위키피디아 R (programming language)페이지의 방문자 수이다.  
+방수자 수에 log scale을 취한다.
+```{r}
+df2 <- read.csv('example_wp_R.csv')
+df2$y <- log(df2$y)
+head(df2)
+```
+
+### set of carrying capacity and trainning
+1. carring capacity를 설정한다.  
+carring capacity는 최대 도달 할 수 있는 성장량을 의미한다. 즉, 총 시장의 크기 및 인구의 크기 등  
+carring capacity는 상수가 될 수 있고 상황에 따라 수용량이 변할 수 있는 함수일 수 있다. 
+2. prophet 함수에 capacity가 입력된 data frame과  growth='logistic'을 입력하여 로지스틱 성장 곡선을 예측 할 수 있다.
+```{r}
+df2$cap <- 8.5
+m <- prophet(df2, growth = 'logistic')
+```
+
+### predict future
+make_future_dataframe 함수로 예측할 기간을 입력한다. 예제에서는 3년을 예측해본다.
+그리고 forecasting(future) data frame에 carring capacity를 입력해 준다.
+마지막으로 predict 함수에 prophet 모델과 future data frame을 입력하여 예측을 수행한다.
+```{r}
+future <- make_future_dataframe(m, periods = 1826)
+future$cap <- 8.5
+fcst <- predict(m, future)
+```
+
+### plotting the forecast
+여러 구성요소를 가진 예측 값을 확인 할 수 있다.
+```{r}
+tail(fcst)
+```
+
+예측 값을 기존데이터와 함께 plotting한다. 
+결과 그래프로 설정한 capacity까지 logistic 성장하는 모형을 볼 수 있다.
+```{r}
+plot(m, fcst)
+```
+
+<hr>
+<br>
+
+# trend changepoints
+<br>
+
+### Automatic changepoint detection in Prophet
+
+실제 대부분의 시계열 데이터는 외부 또는 내부 요인으로 인한 변화가 발생한다.   
+prophet은 자동적으로 시계열 데이터의 앞 80% 지점까지 uniform하게 default 25개의 changepoints를 탐지한다.  
+quick start에서 사용한 peyton manning wiki trend data를 사용해서 확인해본다.
+```{r}
+m <- prophet(df1)
+m$n.changepoints
+```
+
+```{r}
+m$changepoints
+```
+
+changepoins를 시계열 plot에 도식하면 다음과 같다.
+```{r}
+changepoints <- merge(data.frame(ds=as.Date(m$changepoints)), m$history, by="ds")
+plot(m, forecast) + geom_vline(data=changepoints, aes(xintercept=as.numeric(ds)), colour="gray50", linetype = "longdash")
+```
+
+
+prophet 함수안에 n_changepoints 옵션을 입력하여 changepoints를 선택할 수 있다.  
+
+### Adjusting trend flexibility
+trend 변화의 flexibility를 조정할 수 있다. flexibility가 너무 높다는 것은 overfitting을 의미하고 너무 낮다는 것은 underfitting을 의미한다.  
+prophet 함수의 changepoint_prior_scale argument의 값을 입력할 수 있다. default 값은 0.05이다.  
+
+flexibility를 높여 overfitting을 만들어 보자.  
+결고 그래프에서 예측값의 upper bound와 lower bound 값이 점점 벌어지는 것을 확인 할 수 있다. overfitting이 되었기 때문에 시간이 지남에 따라  
+불확실성이 높이지기 때문이다.
+```{r}
+m <- prophet(df1, changepoint.prior.scale = 0.5)
+future <- make_future_dataframe(m, periods = 365)
+forecast <- predict(m, future)
+plot(m, forecast)
+```
+  
+flexibility를 낮춰 underfitting을 만들어 보자.  
+결과 그래프에서 예측값은 년도를 주기로 거의 변화가 없는 것으로 나타난다.
+```{r}
+m <- prophet(df1, changepoint.prior.scale = 0.0005)
+future <- make_future_dataframe(m, periods = 365)
+forecast <- predict(m, future)
+plot(m, forecast)
+```
+
+
+### Specifying the locations of the changepoints
+changepoints를 분석가가 직접 입력할 수 있다. 아래 예제에서 하나의 changepoint를 입력한다.
+```{r}
+m <- prophet(df1, changepoints = c(as.Date('2014-01-01')))
+m$changepoints
+```
+```{r}
+forecast <- predict(m, future)
+plot(m, forecast)
+```
+
+<hr>
+<br>
+
+# holiday Effects
+<br>
+
+### make sample holiday data frame
+playoffs와 superbowls 일정을 event holiday data frame을 만든다. 
+lower_window와 upper_window의 설정은 holiday를 기준으로 전날의 영향을 받는지 다음날의 영향을 받는지를 설정하는 것이다.  
+예를 들어 크리스마스는 lower_window 전날인 이브에 영향을 받을 것이고, 슈퍼볼은 게임이 끝난 직후 영향을 미칠 것으로 보인다.
+```{r}
+playoffs <- data_frame(
+  holiday = 'playoff',
+  ds = as.Date(c('2008-01-13', '2009-01-03', '2010-01-16',
+                 '2010-01-24', '2010-02-07', '2011-01-08',
+                 '2013-01-12', '2014-01-12', '2014-01-19',
+                 '2014-02-02', '2015-01-11', '2016-01-17',
+                 '2016-01-24', '2016-02-07')),
+  lower_window = 0,
+  upper_window = 1
+)
+superbowls <- data_frame(
+  holiday = 'superbowl',
+  ds = as.Date(c('2010-02-07', '2014-02-02', '2016-02-07')),
+  lower_window = 0,
+  upper_window = 1
+)
+holidays <- bind_rows(playoffs, superbowls)
+
+holidays
+```
+
+### forecasting the time series with holiday
+다음 결과 테이블에서 playoff와 superbowl에 대한 event일에 영향을 확일 할 수 있다.  
+```{r}
+m <- prophet(df1, holidays = holidays)
+forecast <- predict(m, future)
+forecast %>% 
+  select(ds, playoff, superbowl) %>% 
+  filter(abs(playoff + superbowl) > 0) %>%
+  tail(10)
+```
+
+holiday에 대한 요소는 다음 그래프로 확인 할 수 있다.
+결과 그래프로 playoff와 superbowl이 동시에 발생한 일에 영향이 높은 것으로 볼 수 있다.
+(playoff가 뭔지 정확이 모르겠음. superbowl을 미식축구 결승전 한국시리즈와 같아 보이는데 playoff와 superbowl일정이 같다는 것은 무엇을 의미하는지???)
+```{r}
+prophet_plot_components(m, forecast)
+```
+
+### Prior scale for holidays and seasonality
+만약에 holiday 영향이 높게 측정되었다면 holidays_prior_scale argument로 scale을 조정할 수 있다. default 값은 10이다.  
+위 default로 설정한 결과와 비교했을 때, effects 값이 작아 졌다.
+```{r}
+m <- prophet(df1, holidays = holidays, holidays.prior.scale = 1)
+forecast <- predict(m, future)
+forecast %>% 
+  select(ds, playoff, superbowl) %>% 
+  filter(abs(playoff + superbowl) > 0) %>%
+  tail(10)
+```
+
+*참고*  
+시즌성이 있는 prophet 모델에서 holiday와 유사하게 seasonality_prior_scale argument 값으로 조정할 수 있다.
+
+
+<hr>
+<br>
+
+# uncertainty intervals
+<br>
+
+prophet에서는 기본적으로 80%의 uncertainty intervals (불확실성 구간, 일반적으로 통계에서 말하는 confidence interval과 같은것으로 보인다.)  
+로 yhat의 upper와 lower bound 값을 결과로 보여준다.  
+interval.width argument로 값을 변경 할 수 있다. 아래 예제에서는 95% 값으로 설정하였다.  
+결과 그래프로 uncertainty 값이 높아짐에 따라 하늘색 구간이 커진것으로 볼 수 있다.
+```{r}
+m <- prophet(df1, interval.width = 0.95)
+forecast <- predict(m, future)
+plot(m, forecast)
+```
+
+<hr>
+<br>
+
+# outliers
+<br>
+
+기존 시계열 데이터의 예측 모델링에서 null 구간 (이빨빠진 구간) 및 outlier의 처리에 대한 이슈가 있다.  
+prophet은 이러한 null구간(resonable한 null 구간)에 대한 자동적으로 예측을 수행한 모델링을 한다.  
+또한, outlier에 대해 null 처리를 함으로써 outlier 처리를 쉽게 할수 있다.
+
+### outlier 1
+아래 데이터는 위 예제의 r wiki page trend 데이터에서 2010년을 outlier 처리한 것이다.  
+예측 결과 그래프를 보면, outlier 때문에 예측 값이 uncertainty가 매우 커지는 것으로, outlier가 예측에 나쁜 영향을 미친것으로 볼 수 있다.
+```{r}
+df3 <- read.csv('example_wp_R_outliers1.csv')
+df3$y <- log(df3$y)
+m <- prophet(df3)
+future <- make_future_dataframe(m, periods = 1096)
+forecast <- predict(m, future)
+plot(m, forecast)
+```
+
+outlier를 null 값처리해서 예측을 수행한다.  
+결과 그래프에서 outlier를 처리 하지 않았을 때보다 안정적인 그래프 모양을 따른다.
+```{r}
+outliers <- (as.Date(df3$ds) > as.Date('2010-01-01')
+             & as.Date(df3$ds) < as.Date('2011-01-01'))
+df3$y[outliers] = NA
+m <- prophet(df3)
+forecast <- predict(m, future)
+plot(m, forecast)
+```
+
+
+### outlier 2
+이번에 2015년6월의 값을 아웃라이어로 낮게 설정한 데이터이다.  
+결과 그래프를 보면 outlier의 영향을 받아 2016년 이후 예측 값이 잘 피팅이 되지 않는 것을 볼 수 있다.
+```{r}
+df4 <- read.csv('example_wp_R_outliers2.csv')
+df4$y = log(df4$y)
+m <- prophet(df4)
+future <- make_future_dataframe(m, periods = 1096)
+forecast <- predict(m, future)
+plot(m, forecast)
+```
+
+outlier 구간을 null처리하여 예측을 수행한다.  
+예측이 뒤로 갈 수 록 uncertainty값이 커지지만, outlier를 제거하지 않을때보다 안정적으로 예측된 것을 볼 수 있다.
+```{r}
+outliers <- (as.Date(df4$ds) > as.Date('2015-06-01')
+             & as.Date(df4$ds) < as.Date('2015-06-30'))
+df4$y[outliers] = NA
+m <- prophet(df4)
+forecast <- predict(m, future)
+plot(m, forecast)
+```
+
+<hr>
+<br>
+
+# non-daily data
+<br>
+
+위 예제는 daily 시계열 데이터에 대한 예측을 수행하였다. prophet은 daily뿐 아니라 weekly, monthly, quarterly 수행이 가능하다.  
+이번 예제에서는 US retail sales volume인 monthly 데이터를 사용하여 next 10 years forecasting을 수행해본다.
+
+```{r}
+df5 <- read.csv('example_retail_sales.csv')
+m <- prophet(df5)
+future <- make_future_dataframe(m, periods = 3652)
+fcst <- predict(m, future)
+plot(m, fcst)
+```
+
+위 결과 그래프의 예측부분이 history 데이터와 달라보이는데, input data의 date 구간에 따라 future data의 date 구간을 맞춰야 한다.  
+make_future_dataframe 함수에서 freq='m' 값을 입력하여 monthly data임을 명시하고 forecasting을 수행한다.
+```{r}
+future <- make_future_dataframe(m, periods = 120, freq = 'm')
+fcst <- predict(m, future)
+plot(m, fcst)
+```
+
+<br><br><br><br><br><br><br>
+
+
+
+
+
+
+
